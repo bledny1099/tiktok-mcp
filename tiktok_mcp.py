@@ -335,6 +335,8 @@ async def _upload(path: Path, content_type: str, meta: dict[str, Any]) -> str:
         dest_dir = Path(CFG.local_dir)
         dest_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, dest_dir / path.name)
+        if not CFG.public_base_url:
+            return str(dest_dir / path.name)
         return f"{CFG.public_base_url.rstrip('/')}/{path.name}"
 
     if not CFG.upload_url:
