@@ -1,7 +1,7 @@
 """TikTok MCP server.
 
-Метаданные и медиа берутся скрейпингом публичной страницы через yt-dlp
-(без TikTok Developer API / OAuth). Расшифровка — локально, faster-whisper.
+Metadata and media extraction via yt-dlp public page scraping (no TikTok Developer API / OAuth required).
+Local speech-to-text transcription powered by faster-whisper.
 """
 
 from __future__ import annotations
@@ -28,14 +28,14 @@ from yt_dlp.utils import DownloadError
 mcp = FastMCP(
     "tiktok",
     instructions=(
-        "Работа с публичными видео TikTok без официального API: метаданные "
-        "(название, описание, превью, автор, статистика), расшифровка речи "
-        "в текст и публикация видео на собственный домен."
+        "TikTok media processing without official API: extract video metadata "
+        "(title, description, cover thumbnail, author, statistics), transcribe speech to text "
+        "locally with Whisper, and publish media to a custom domain or storage."
     ),
 )
 
 # --------------------------------------------------------------------------- #
-# Конфигурация (env)
+# Configuration (environment variables)
 # --------------------------------------------------------------------------- #
 
 
@@ -47,7 +47,7 @@ class Config:
         )
         / "tiktok-mcp"
     )
-    # cookies: путь к cookies.txt ИЛИ имя браузера (chrome/firefox/edge/safari)
+    # cookies: path to cookies.txt OR browser name (chrome/firefox/edge/safari)
     cookies_file: str | None = os.getenv("TIKTOK_MCP_COOKIES_FILE") or None
     cookies_browser: str | None = os.getenv("TIKTOK_MCP_COOKIES_BROWSER") or None
     proxy: str | None = os.getenv("TIKTOK_MCP_PROXY") or None
@@ -57,14 +57,14 @@ class Config:
     whisper_device: str = os.getenv("TIKTOK_MCP_WHISPER_DEVICE", "auto")
     whisper_compute: str = os.getenv("TIKTOK_MCP_WHISPER_COMPUTE", "int8")
 
-    # публикация
+    # publishing
     upload_mode: Literal["http", "local", "off"] = os.getenv("TIKTOK_MCP_UPLOAD_MODE", "off")  # type: ignore[assignment]
     upload_url: str | None = os.getenv("TIKTOK_MCP_UPLOAD_URL") or None
     upload_token: str | None = os.getenv("TIKTOK_MCP_UPLOAD_TOKEN") or None
     local_dir: str | None = os.getenv("TIKTOK_MCP_LOCAL_DIR") or None
     public_base_url: str = os.getenv("TIKTOK_MCP_PUBLIC_BASE_URL", "")
 
-    # лимиты
+    # concurrency limits
     max_transcribe_sec: int = int(os.getenv("TIKTOK_MCP_MAX_TRANSCRIBE_SEC", "600"))
     max_concurrent_transcribe: int = int(os.getenv("TIKTOK_MCP_MAX_CONCURRENT_TRANSCRIBE", "1"))
     max_concurrent_meta: int = int(os.getenv("TIKTOK_MCP_MAX_CONCURRENT_META", "4"))
@@ -77,15 +77,15 @@ _TRANSCRIBE_SEM = asyncio.Semaphore(CFG.max_concurrent_transcribe)
 _META_SEM = asyncio.Semaphore(CFG.max_concurrent_meta)
 
 _URL_RE = re.compile(r"https?://(?:www\.|m\.|vm\.|vt\.)?tiktok\.com/\S+", re.I)
-_HASHTAG_RE = re.compile(r"#([\w\u0400-\u04FF]+)")
-_LINK_RE = re.compile(r"https?://[^\s\u0400-\u04FF]+")
+_HASHTAG_RE = re.compile(r"#(\w+)")
+_LINK_RE = re.compile(r"https?://[^\s<>\"]+")
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 
 def _validate_url(url: str) -> str:
     url = url.strip()
     if not _URL_RE.match(url):
-        raise ValueError(f"Не похоже на ссылку TikTok: {url!r}")
+        raise ValueError(f"Invalid TikTok URL: {url!r}")
     return url
 
 
@@ -119,7 +119,7 @@ def _ydl_opts(**extra: Any) -> dict[str, Any]:
 
 
 def _extract_fallback(url: str, *, download: bool = False, **extra: Any) -> dict[str, Any]:
-    """Резервный скрейпер через публичный API tikwm на случай антибот-блокировок yt-dlp."""
+    """Fallback scraper via public tikwm API in case yt-dlp encounters anti-bot challenges."""
     with httpx.Client(proxy=CFG.proxy, timeout=30.0, follow_redirects=True) as client:
         resp = client.post(
             "https://www.tikwm.com/api/",
@@ -207,7 +207,7 @@ def _extract(url: str, *, download: bool = False, **extra: Any) -> dict[str, Any
         if info and info.get("_type") == "playlist":
             entries = [e for e in info.get("entries") or [] if e]
             if not entries:
-                raise ValueError("По ссылке не найдено ни одного видео")
+                raise ValueError("No videos found at the provided URL")
             info = entries[0]
         return info or {}
     except Exception as exc:
@@ -239,7 +239,7 @@ def _best_thumbnail(info: dict[str, Any]) -> str | None:
 def _pack_meta(info: dict[str, Any]) -> dict[str, Any]:
     description = info.get("description") or ""
     raw_title = info.get("title") or description
-    # TikTok часто кладёт всё описание в title — режем до первой строки/100 символов
+    # TikTok often puts full description in title — truncate to first line / 100 chars
     title = raw_title.split("\n", 1)[0].strip()
     if len(title) > 100:
         title = title[:97].rstrip() + "…"
@@ -270,7 +270,7 @@ def _pack_meta(info: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _oembed(url: str) -> dict[str, Any]:
-    """Лёгкий публичный oEmbed-эндпоинт: только title/author/thumbnail, без ключей."""
+    """Lightweight public oEmbed endpoint: title, author, and thumbnail only, without API keys."""
     async with httpx.AsyncClient(proxy=CFG.proxy, timeout=10, follow_redirects=True) as client:
         r = await client.get("https://www.tiktok.com/oembed", params={"url": url})
         r.raise_for_status()
@@ -307,7 +307,7 @@ def _get_model(size: str | None = None):
 
 
 def _filter_kwargs(fn: Any, kwargs: dict[str, Any]) -> dict[str, Any]:
-    """Отбрасывает параметры, которых нет в текущей версии faster-whisper."""
+    """Discards parameters unsupported by the installed version of faster-whisper."""
     allowed = set(inspect.signature(fn).parameters)
     return {k: v for k, v in kwargs.items() if k in allowed}
 
@@ -327,7 +327,7 @@ def _run_whisper(
     if languages and len(languages) == 1:
         kwargs["language"] = languages[0]
     elif languages and len(languages) > 1:
-        # одна мультиязычная модель на все выбранные языки, без переключения моделей
+        # Single multilingual model handles all selected languages without switching
         kwargs["multilingual"] = True
     kwargs = _filter_kwargs(model.transcribe, kwargs)
 
@@ -354,18 +354,18 @@ def _run_whisper(
 
 
 # --------------------------------------------------------------------------- #
-# Загрузка на свой домен
+# Upload to custom domain or storage
 # --------------------------------------------------------------------------- #
 
 
 async def _upload(path: Path, content_type: str, meta: dict[str, Any]) -> str:
     if CFG.upload_mode == "off":
         raise RuntimeError(
-            "Публикация выключена. Задайте TIKTOK_MCP_UPLOAD_MODE=http|local и связанные переменные."
+            "Publishing is disabled. Set TIKTOK_MCP_UPLOAD_MODE=http|local and related environment variables."
         )
     if CFG.upload_mode == "local":
         if not CFG.local_dir:
-            raise RuntimeError("TIKTOK_MCP_LOCAL_DIR не задан")
+            raise RuntimeError("TIKTOK_MCP_LOCAL_DIR is not configured")
         dest_dir = Path(CFG.local_dir)
         dest_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, dest_dir / path.name)
@@ -374,7 +374,7 @@ async def _upload(path: Path, content_type: str, meta: dict[str, Any]) -> str:
         return f"{CFG.public_base_url.rstrip('/')}/{path.name}"
 
     if not CFG.upload_url:
-        raise RuntimeError("TIKTOK_MCP_UPLOAD_URL не задан")
+        raise RuntimeError("TIKTOK_MCP_UPLOAD_URL is not configured")
     headers = {"Authorization": f"Bearer {CFG.upload_token}"} if CFG.upload_token else {}
     async with httpx.AsyncClient(timeout=600) as client:
         with path.open("rb") as fh:
@@ -392,7 +392,7 @@ async def _upload(path: Path, content_type: str, meta: dict[str, Any]) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# Инструменты MCP
+# MCP Tools
 # --------------------------------------------------------------------------- #
 
 
@@ -408,10 +408,10 @@ async def _video_info(url: str, fast: bool = False) -> dict[str, Any]:
             info = await asyncio.to_thread(_extract, url)
         return _pack_meta(info)
     except DownloadError as exc:
-        # частая причина — TikTok требует свежие cookies; отдаём хоть что-то
+        # Common cause: TikTok requires fresh cookies; return oEmbed fallback
         try:
             fallback = await _oembed(url)
-            fallback["warning"] = f"yt-dlp не смог разобрать страницу ({exc}); отдан oEmbed-минимум"
+            fallback["warning"] = f"yt-dlp failed to parse page ({exc}); returning oEmbed fallback"
             return fallback
         except Exception:
             raise exc
@@ -419,11 +419,11 @@ async def _video_info(url: str, fast: bool = False) -> dict[str, Any]:
 
 @mcp.tool
 async def get_video_info(url: str, fast: bool = False) -> dict[str, Any]:
-    """Название, описание, превью, автор и статистика ролика TikTok.
+    """Returns title, description, cover thumbnail, author, and statistics for a TikTok video.
 
     Args:
-        url: ссылка на видео (полная или короткая vm./vt.).
-        fast: True — только oEmbed (мгновенно, но без описания и статистики).
+        url: TikTok video URL (full or shortened vm./vt. link).
+        fast: When True, uses lightweight oEmbed (instant response, omitting extended statistics).
     """
     return await _video_info(url, fast)
 
@@ -437,15 +437,15 @@ async def _transcribe(
 ) -> dict[str, Any]:
     url = _validate_url(url)
     if languages and len(languages) > 3:
-        raise ValueError("Максимум 3 языка за раз")
+        raise ValueError("A maximum of 3 languages can be specified at once")
 
-    # отсекаем длинные ролики ДО скачивания — иначе клиент отвалится по таймауту
+    # Guard against excessively long videos before downloading to prevent client timeouts
     probe = await asyncio.to_thread(_extract, url)
     duration = probe.get("duration") or 0
     if duration and duration > CFG.max_transcribe_sec:
         raise ValueError(
-            f"Ролик длится {int(duration)} c при лимите {CFG.max_transcribe_sec} c. "
-            "Поднимите TIKTOK_MCP_MAX_TRANSCRIBE_SEC или обработайте офлайн."
+            f"Video duration is {int(duration)}s, exceeding limit of {CFG.max_transcribe_sec}s. "
+            "Increase TIKTOK_MCP_MAX_TRANSCRIBE_SEC or process offline."
         )
 
     async with _TRANSCRIBE_SEM:
@@ -488,15 +488,15 @@ async def transcribe_video(
     model_size: str | None = None,
     keep_audio: bool = False,
 ) -> dict[str, Any]:
-    """Скачивает дорожку ролика и переводит речь в текст локально.
+    """Downloads audio from a TikTok video and transcribes speech to text locally using Whisper.
 
     Args:
-        url: ссылка на видео TikTok.
-        languages: 1-3 кода языка ("ru", "en"). Один — жёсткая фиксация;
-            несколько — одна мультиязычная модель на все сразу; None — автоопределение.
-        with_timestamps: вернуть посегментную разбивку с таймкодами.
-        model_size: переопределить модель whisper (tiny/base/small/medium/large-v3/large-v3-turbo).
-        keep_audio: не удалять скачанный аудиофайл.
+        url: TikTok video URL.
+        languages: 1-3 language codes (e.g., ['en', 'es']). One locks the model;
+            multiple uses a single multilingual model; None enables auto-detection.
+        with_timestamps: Return word/segment breakdown with start and end timestamps.
+        model_size: Whisper model override (tiny/base/small/medium/large-v3/large-v3-turbo).
+        keep_audio: Retain downloaded audio file on disk instead of removing it.
     """
     return await _transcribe(url, languages, with_timestamps, model_size, keep_audio)
 
@@ -509,14 +509,14 @@ async def publish_video(
     languages: list[str] | None = None,
     max_height: int = 1080,
 ) -> dict[str, Any]:
-    """Скачивает видео + превью и заливает их на свой домен, возвращая публичные ссылки.
+    """Downloads video and cover thumbnail, uploads them to custom domain storage, and returns public URLs.
 
     Args:
-        url: ссылка на видео TikTok.
-        slug: имя файла без расширения (по умолчанию — из названия ролика).
-        include_transcript: приложить расшифровку речи к метаданным.
-        languages: языки для расшифровки (см. transcribe_video).
-        max_height: ограничение по высоте видео.
+        url: TikTok video URL.
+        slug: Output filename without extension (defaults to sanitized video title).
+        include_transcript: Transcribe speech and attach text to video metadata.
+        languages: Language codes for transcription (see transcribe_video).
+        max_height: Maximum video resolution height (e.g. 720, 1080).
     """
     url = _validate_url(url)
     tmp_dir = Path(tempfile.mkdtemp(dir=CFG.work_dir, prefix="publish-"))
@@ -560,9 +560,9 @@ async def publish_video(
 
 @mcp.tool
 async def batch_video_info(urls: list[str], fast: bool = True) -> list[dict[str, Any]]:
-    """Метаданные для нескольких роликов сразу (до 20 ссылок)."""
+    """Fetches metadata for up to 20 TikTok video URLs concurrently."""
     if len(urls) > 20:
-        raise ValueError("Максимум 20 ссылок за вызов")
+        raise ValueError("Maximum 20 URLs allowed per batch request")
     results = await asyncio.gather(
         *(_video_info(u, fast) for u in urls),
         return_exceptions=True,
@@ -574,7 +574,7 @@ async def batch_video_info(urls: list[str], fast: bool = True) -> list[dict[str,
 
 
 def main() -> None:
-    """stdio — если MCP-клиент сам запускает процесс; http — если сервер живёт демоном."""
+    """stdio transport when an MCP client launches the process; http when running as a daemon."""
     transport = os.getenv("TIKTOK_MCP_TRANSPORT", "stdio")
     if transport == "stdio":
         mcp.run()
