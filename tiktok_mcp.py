@@ -64,12 +64,21 @@ class Config:
     local_dir: str | None = os.getenv("TIKTOK_MCP_LOCAL_DIR") or None
     public_base_url: str = os.getenv("TIKTOK_MCP_PUBLIC_BASE_URL", "")
 
+    # лимиты
+    max_transcribe_sec: int = int(os.getenv("TIKTOK_MCP_MAX_TRANSCRIBE_SEC", "600"))
+    max_concurrent_transcribe: int = int(os.getenv("TIKTOK_MCP_MAX_CONCURRENT_TRANSCRIBE", "1"))
+    max_concurrent_meta: int = int(os.getenv("TIKTOK_MCP_MAX_CONCURRENT_META", "4"))
+
 
 CFG = Config()
 CFG.work_dir.mkdir(parents=True, exist_ok=True)
 
+_TRANSCRIBE_SEM = asyncio.Semaphore(CFG.max_concurrent_transcribe)
+_META_SEM = asyncio.Semaphore(CFG.max_concurrent_meta)
+
 _URL_RE = re.compile(r"https?://(?:www\.|m\.|vm\.|vt\.)?tiktok\.com/\S+", re.I)
 _HASHTAG_RE = re.compile(r"#([\w\u0400-\u04FF]+)")
+_LINK_RE = re.compile(r"https?://[^\s\u0400-\u04FF]+")
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 
@@ -86,7 +95,7 @@ def _slugify(text: str, fallback: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# yt-dlp
+# yt-dlp & fallback extraction
 # --------------------------------------------------------------------------- #
 
 
@@ -95,9 +104,9 @@ def _ydl_opts(**extra: Any) -> dict[str, Any]:
         "quiet": True,
         "no_warnings": True,
         "noprogress": True,
-        "socket_timeout": 30,
-        "retries": 3,
-        "extractor_retries": 3,
+        "socket_timeout": 10,
+        "retries": 1,
+        "extractor_retries": 1,
     }
     if CFG.cookies_file:
         opts["cookiefile"] = CFG.cookies_file
@@ -110,21 +119,39 @@ def _ydl_opts(**extra: Any) -> dict[str, Any]:
 
 
 def _extract_fallback(url: str, *, download: bool = False, **extra: Any) -> dict[str, Any]:
-    api_url = f"https://www.tikwm.com/api/?url={urllib.parse.quote(url)}"
-    with httpx.Client(proxy=CFG.proxy, timeout=20, follow_redirects=True) as client:
-        resp = client.get(api_url)
-        data = resp.json()
-        if data.get("code") != 0 or not data.get("data"):
-            raise ValueError(f"Fallback API error: {data.get('msg')}")
-        d = data["data"]
-        info = {
+    """Резервный скрейпер через публичный API tikwm на случай антибот-блокировок yt-dlp."""
+    with httpx.Client(proxy=CFG.proxy, timeout=30.0, follow_redirects=True) as client:
+        resp = client.post(
+            "https://www.tikwm.com/api/",
+            data={"url": url, "count": 12, "cursor": 0, "web": 1, "hd": 1},
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+                )
+            },
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+        if payload.get("code") != 0 or not payload.get("data"):
+            raise RuntimeError(f"Tikwm fallback error: {payload.get('msg', 'unknown error')}")
+
+        def _tikwm_url(u: str | None) -> str | None:
+            if not u:
+                return None
+            if u.startswith("http://") or u.startswith("https://"):
+                return u
+            return "https://www.tikwm.com" + u
+
+        d = payload["data"]
+        info: dict[str, Any] = {
             "id": str(d.get("id")),
             "title": d.get("title"),
             "description": d.get("title"),
             "uploader": d.get("author", {}).get("nickname"),
             "uploader_id": d.get("author", {}).get("unique_id"),
             "uploader_url": f"https://www.tiktok.com/@{d.get('author', {}).get('unique_id')}",
-            "thumbnail": d.get("cover"),
+            "thumbnail": _tikwm_url(d.get("cover")),
             "duration": d.get("duration"),
             "timestamp": d.get("create_time"),
             "view_count": d.get("play_count"),
@@ -140,8 +167,8 @@ def _extract_fallback(url: str, *, download: bool = False, **extra: Any) -> dict
 
         if download:
             outtmpl = extra.get("outtmpl")
-            video_url = d.get("play")
-            audio_url = d.get("music") or video_url
+            video_url = _tikwm_url(d.get("play") or d.get("wmplay") or d.get("hdplay"))
+            audio_url = _tikwm_url(d.get("music")) or video_url
 
             postprocessors = extra.get("postprocessors", [])
             needs_wav = any(p.get("preferredcodec") == "wav" for p in postprocessors)
@@ -211,12 +238,18 @@ def _best_thumbnail(info: dict[str, Any]) -> str | None:
 
 def _pack_meta(info: dict[str, Any]) -> dict[str, Any]:
     description = info.get("description") or ""
+    raw_title = info.get("title") or description
+    # TikTok часто кладёт всё описание в title — режем до первой строки/100 символов
+    title = raw_title.split("\n", 1)[0].strip()
+    if len(title) > 100:
+        title = title[:97].rstrip() + "…"
     return {
         "id": info.get("id"),
         "url": info.get("webpage_url") or info.get("original_url"),
-        "title": info.get("title") or description[:100] or None,
+        "title": title or None,
         "description": description,
         "hashtags": _HASHTAG_RE.findall(description),
+        "links": _LINK_RE.findall(description),
         "thumbnail": _best_thumbnail(info),
         "author": {
             "name": info.get("uploader") or info.get("creator"),
@@ -232,13 +265,13 @@ def _pack_meta(info: dict[str, Any]) -> dict[str, Any]:
             "shares": info.get("repost_count"),
         },
         "music": {"track": info.get("track"), "artist": info.get("artist")},
-        "source": "yt-dlp",
+        "source": info.get("source", "yt-dlp"),
     }
 
 
 async def _oembed(url: str) -> dict[str, Any]:
     """Лёгкий публичный oEmbed-эндпоинт: только title/author/thumbnail, без ключей."""
-    async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+    async with httpx.AsyncClient(proxy=CFG.proxy, timeout=10, follow_redirects=True) as client:
         r = await client.get("https://www.tiktok.com/oembed", params={"url": url})
         r.raise_for_status()
         data = r.json()
@@ -248,6 +281,7 @@ async def _oembed(url: str) -> dict[str, Any]:
         "title": data.get("title"),
         "description": data.get("title"),
         "hashtags": _HASHTAG_RE.findall(data.get("title") or ""),
+        "links": _LINK_RE.findall(data.get("title") or ""),
         "thumbnail": data.get("thumbnail_url"),
         "author": {"name": data.get("author_name"), "url": data.get("author_url")},
         "source": "oembed",
@@ -362,6 +396,27 @@ async def _upload(path: Path, content_type: str, meta: dict[str, Any]) -> str:
 # --------------------------------------------------------------------------- #
 
 
+async def _video_info(url: str, fast: bool = False) -> dict[str, Any]:
+    url = _validate_url(url)
+    if fast:
+        try:
+            return await _oembed(url)
+        except Exception:
+            pass
+    try:
+        async with _META_SEM:
+            info = await asyncio.to_thread(_extract, url)
+        return _pack_meta(info)
+    except DownloadError as exc:
+        # частая причина — TikTok требует свежие cookies; отдаём хоть что-то
+        try:
+            fallback = await _oembed(url)
+            fallback["warning"] = f"yt-dlp не смог разобрать страницу ({exc}); отдан oEmbed-минимум"
+            return fallback
+        except Exception:
+            raise exc
+
+
 @mcp.tool
 async def get_video_info(url: str, fast: bool = False) -> dict[str, Any]:
     """Название, описание, превью, автор и статистика ролика TikTok.
@@ -370,17 +425,59 @@ async def get_video_info(url: str, fast: bool = False) -> dict[str, Any]:
         url: ссылка на видео (полная или короткая vm./vt.).
         fast: True — только oEmbed (мгновенно, но без описания и статистики).
     """
+    return await _video_info(url, fast)
+
+
+async def _transcribe(
+    url: str,
+    languages: list[str] | None = None,
+    with_timestamps: bool = False,
+    model_size: str | None = None,
+    keep_audio: bool = False,
+) -> dict[str, Any]:
     url = _validate_url(url)
-    if fast:
-        return await _oembed(url)
-    try:
-        info = await asyncio.to_thread(_extract, url)
-        return _pack_meta(info)
-    except DownloadError as exc:
-        # частая причина — TikTok требует свежие cookies; отдаём хоть что-то
-        fallback = await _oembed(url)
-        fallback["warning"] = f"yt-dlp не смог разобрать страницу ({exc}); отдан oEmbed-минимум"
-        return fallback
+    if languages and len(languages) > 3:
+        raise ValueError("Максимум 3 языка за раз")
+
+    # отсекаем длинные ролики ДО скачивания — иначе клиент отвалится по таймауту
+    probe = await asyncio.to_thread(_extract, url)
+    duration = probe.get("duration") or 0
+    if duration and duration > CFG.max_transcribe_sec:
+        raise ValueError(
+            f"Ролик длится {int(duration)} c при лимите {CFG.max_transcribe_sec} c. "
+            "Поднимите TIKTOK_MCP_MAX_TRANSCRIBE_SEC или обработайте офлайн."
+        )
+
+    async with _TRANSCRIBE_SEM:
+        tmp_dir = Path(tempfile.mkdtemp(dir=CFG.work_dir, prefix="audio-"))
+        try:
+            info = await asyncio.to_thread(
+                _extract,
+                url,
+                download=True,
+                format="bestaudio/best",
+                outtmpl=str(tmp_dir / "%(id)s.%(ext)s"),
+                postprocessors=[
+                    {"key": "FFmpegExtractAudio", "preferredcodec": "wav", "preferredquality": "0"}
+                ],
+                postprocessor_args={"extractaudio": ["-ar", "16000", "-ac", "1"]},
+            )
+            audio = next((p for p in tmp_dir.glob("*.wav")), None) or next(tmp_dir.iterdir())
+            result = await asyncio.to_thread(
+                _run_whisper, audio, languages, model_size, with_timestamps
+            )
+            result["video"] = {
+                "id": info.get("id"),
+                "title": info.get("title"),
+                "author": info.get("uploader_id"),
+                "url": info.get("webpage_url") or url,
+            }
+            if keep_audio:
+                result["audio_path"] = str(audio)
+            return result
+        finally:
+            if not keep_audio:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 @mcp.tool
@@ -401,39 +498,7 @@ async def transcribe_video(
         model_size: переопределить модель whisper (tiny/base/small/medium/large-v3/large-v3-turbo).
         keep_audio: не удалять скачанный аудиофайл.
     """
-    url = _validate_url(url)
-    if languages and len(languages) > 3:
-        raise ValueError("Максимум 3 языка за раз")
-
-    tmp_dir = Path(tempfile.mkdtemp(dir=CFG.work_dir, prefix="audio-"))
-    try:
-        info = await asyncio.to_thread(
-            _extract,
-            url,
-            download=True,
-            format="bestaudio/best",
-            outtmpl=str(tmp_dir / "%(id)s.%(ext)s"),
-            postprocessors=[
-                {"key": "FFmpegExtractAudio", "preferredcodec": "wav", "preferredquality": "0"}
-            ],
-            postprocessor_args={"extractaudio": ["-ar", "16000", "-ac", "1"]},
-        )
-        audio = next((p for p in tmp_dir.glob("*.wav")), None) or next(tmp_dir.iterdir())
-        result = await asyncio.to_thread(
-            _run_whisper, audio, languages, model_size, with_timestamps
-        )
-        result["video"] = {
-            "id": info.get("id"),
-            "title": info.get("title"),
-            "author": info.get("uploader_id"),
-            "url": info.get("webpage_url") or url,
-        }
-        if keep_audio:
-            result["audio_path"] = str(audio)
-        return result
-    finally:
-        if not keep_audio:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
+    return await _transcribe(url, languages, with_timestamps, model_size, keep_audio)
 
 
 @mcp.tool
@@ -472,7 +537,7 @@ async def publish_video(
         video_file.rename(target)
 
         if include_transcript:
-            transcript = await transcribe_video.fn(url=url, languages=languages)  # type: ignore[attr-defined]
+            transcript = await _transcribe(url, languages=languages)
             meta["transcript"] = transcript["text"]
             meta["transcript_language"] = transcript["detected_language"]
 
@@ -499,7 +564,7 @@ async def batch_video_info(urls: list[str], fast: bool = True) -> list[dict[str,
     if len(urls) > 20:
         raise ValueError("Максимум 20 ссылок за вызов")
     results = await asyncio.gather(
-        *(get_video_info.fn(url=u, fast=fast) for u in urls),  # type: ignore[attr-defined]
+        *(_video_info(u, fast) for u in urls),
         return_exceptions=True,
     )
     return [

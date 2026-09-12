@@ -128,11 +128,31 @@ If you don't have a dedicated web server or custom domain, you can host download
 
 ## Client Configuration
 
-### Antigravity IDE / Claude Desktop / Cursor
+### 1. AI IDEs & Code Editors (Cursor, Antigravity IDE, Windsurf, VS Code)
 
-Add the server to your client configuration file (e.g. `mcp_config.json`):
+Configure the local MCP server via stdio in your editor's `mcp_config.json`:
 
-**Option A: Remote Streamable HTTP / SSE connector**
+```json
+{
+  "mcpServers": {
+    "tiktok": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "/absolute/path/to/tiktok-mcp",
+        "tiktok-mcp"
+      ],
+      "env": {
+        "TIKTOK_MCP_PROXY": "http://127.0.0.1:10809"
+      }
+    }
+  }
+}
+```
+
+Or connect to your remote daemon instance via Streamable HTTP / SSE:
+
 ```json
 {
   "mcpServers": {
@@ -146,7 +166,9 @@ Add the server to your client configuration file (e.g. `mcp_config.json`):
 }
 ```
 
-**Option B: Local stdio command**
+### 2. AI Assistants & Chat Apps (Claude Desktop, Claude Web / Mobile)
+
+**Claude Desktop (`claude_desktop_config.json`):**
 ```json
 {
   "mcpServers": {
@@ -162,6 +184,11 @@ Add the server to your client configuration file (e.g. `mcp_config.json`):
   }
 }
 ```
+
+**Claude Web & Mobile (Remote HTTP Connector):**
+1. Settings → Connectors → **Add custom connector**
+2. URL: `https://mcp.yourdomain.com/mcp`
+3. Authentication: select **No sign-in** and click **+ Add header** with `Authorization: Bearer <YOUR_MCP_TOKEN>`.
 
 ---
 
