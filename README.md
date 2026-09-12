@@ -82,13 +82,13 @@ TIKTOK_MCP_PROXY=http://127.0.0.1:10809
 
 **Option A: Local stdio (for IDEs and Desktop clients)**
 ```bash
-uv run tiktok-mcp
+uv run python server.py
 ```
 
 **Option B: HTTP / SSE daemon (for remote server deployments)**
 ```bash
 export TIKTOK_MCP_TRANSPORT=http
-uv run tiktok-mcp
+uv run python server.py
 ```
 
 ---
@@ -135,8 +135,8 @@ Choose the simplest setup method for your app or device:
 In the mobile app or browser, **no JSON files or terminal commands are needed**:
 
 1. Open Claude on your phone or in the web browser.
-2. Go to **Settings** → **Connectors** (или **Настройки** → **Коннекторы**).
-3. Click **Add custom connector** (**Добавить коннектор**).
+2. Go to **Settings** → **Connectors**.
+3. Click **Add custom connector**.
 4. Enter the connector details:
    - **Name**: `TikTok`
    - **URL**: `https://mcp.yourdomain.com/mcp`
@@ -150,18 +150,13 @@ In the mobile app or browser, **no JSON files or terminal commands are needed**:
 
 ### 2. Cursor, Antigravity IDE, Windsurf, etc.
 
-In AI IDEs (Cursor, Antigravity IDE, Windsurf), MCP servers can be added directly through the editor UI or configuration files. The setup is practically identical across all three:
-
-**Automatic 1-Click Install in Cursor:**
-```bash
-uv run fastmcp install cursor tiktok_mcp.py
-```
+In AI IDEs (Cursor, Antigravity IDE, Windsurf), MCP servers can be added directly through the editor UI or configuration files. The setup is identical across all three:
 
 **Editor Settings UI (Cursor / Antigravity IDE / Windsurf):**
 - Open **Settings** → **Features** (or **Tools**) → **MCP Servers** → **Add New MCP Server**
 - **Type**: `stdio`
 - **Command**: `uv`
-- **Args**: `run --directory /absolute/path/to/tiktok-mcp tiktok-mcp`
+- **Args**: `run --directory /absolute/path/to/tiktok-mcp python server.py`
 
 **Manual Editor Config (`mcp_config.json`):**
 
@@ -175,7 +170,8 @@ uv run fastmcp install cursor tiktok_mcp.py
         "run",
         "--directory",
         "/absolute/path/to/tiktok-mcp",
-        "tiktok-mcp"
+        "python",
+        "server.py"
       ],
       "env": {
         "TIKTOK_MCP_PROXY": "http://127.0.0.1:10809"
@@ -203,15 +199,14 @@ uv run fastmcp install cursor tiktok_mcp.py
 
 ### 3. Claude Desktop
 
-Skip opening hidden configuration folders or editing JSON files manually:
+In Claude Desktop, configure the server in `claude_desktop_config.json`:
 
-**Automatic 1-Click Install via CLI:**
-```bash
-uv run fastmcp install claude-desktop tiktok_mcp.py
-```
-*FastMCP automatically locates your Claude Desktop settings and registers the server.*
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+- **Linux**: `~/.config/Claude/claude_desktop_config.json`
 
-*(Optional) Manual Config (`claude_desktop_config.json`):*
+Add the server definition:
+
 ```json
 {
   "mcpServers": {
@@ -221,12 +216,15 @@ uv run fastmcp install claude-desktop tiktok_mcp.py
         "run",
         "--directory",
         "/absolute/path/to/tiktok-mcp",
-        "tiktok-mcp"
+        "python",
+        "server.py"
       ]
     }
   }
 }
 ```
+
+> **Note for Windows users:** Use forward slashes (e.g. `C:/Users/username/tiktok-mcp`) or escaped backslashes (`C:\\Users\\username\\tiktok-mcp`) in the `--directory` argument.
 
 ---
 
