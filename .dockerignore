@@ -1,0 +1,12 @@
+.venv
+venv
+*.env
+.env*
+cookies.txt
+__pycache__
+*.pyc
+models/
+audio-*/
+publish-*/
+.git
+.github
