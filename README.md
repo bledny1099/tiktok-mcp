@@ -128,10 +128,65 @@ If you don't have a dedicated web server or custom domain, you can host download
 
 ## Client Configuration
 
-### 1. AI IDEs & Code Editors (Cursor, Antigravity IDE, Windsurf, VS Code)
+Choose the simplest setup method for your app or device:
 
-Configure the local MCP server via stdio in your editor's `mcp_config.json`:
+### 1. Claude Mobile (iOS / Android) & Claude Web (Zero Files, UI Only)
 
+In the mobile app or browser, **no JSON files or terminal commands are needed**:
+
+1. Open Claude on your phone or in the web browser.
+2. Go to **Settings** → **Connectors** (или **Настройки** → **Коннекторы**).
+3. Click **Add custom connector** (**Добавить коннектор**).
+4. Enter the connector details:
+   - **Name**: `TikTok`
+   - **URL**: `https://mcp.yourdomain.com/mcp`
+   - **Authentication**: Select **No sign-in**
+   - Click **+ Add header**:
+     - Key: `Authorization`
+     - Value: `Bearer <YOUR_MCP_TOKEN>`
+5. Click **Add connector**. The TikTok tools will appear directly in your chat on both phone and web!
+
+---
+
+### 2. Claude Desktop (One-Command Auto-Install)
+
+Skip opening hidden configuration folders or editing JSON files manually:
+
+**Automatic 1-Click Install via CLI:**
+```bash
+uv run fastmcp install claude-desktop tiktok_mcp.py
+```
+*FastMCP automatically locates your Claude Desktop settings and registers the server.*
+
+*(Optional) Manual Config (`claude_desktop_config.json`):*
+```json
+{
+  "mcpServers": {
+    "tiktok": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "/absolute/path/to/tiktok-mcp",
+        "tiktok-mcp"
+      ]
+    }
+  }
+}
+```
+
+---
+
+### 3. AI IDEs & Code Editors (Cursor, Antigravity IDE, Windsurf, VS Code)
+
+**Automatic Install in Cursor:**
+```bash
+uv run fastmcp install cursor tiktok_mcp.py
+```
+
+**Manual Editor Config (`mcp_config.json`):**
+
+*Local stdio:*
 ```json
 {
   "mcpServers": {
@@ -151,8 +206,7 @@ Configure the local MCP server via stdio in your editor's `mcp_config.json`:
 }
 ```
 
-Or connect to your remote daemon instance via Streamable HTTP / SSE:
-
+*Remote Streamable HTTP / SSE:*
 ```json
 {
   "mcpServers": {
@@ -165,30 +219,6 @@ Or connect to your remote daemon instance via Streamable HTTP / SSE:
   }
 }
 ```
-
-### 2. AI Assistants & Chat Apps (Claude Desktop, Claude Web / Mobile)
-
-**Claude Desktop (`claude_desktop_config.json`):**
-```json
-{
-  "mcpServers": {
-    "tiktok": {
-      "command": "uv",
-      "args": [
-        "run",
-        "--directory",
-        "/absolute/path/to/tiktok-mcp",
-        "tiktok-mcp"
-      ]
-    }
-  }
-}
-```
-
-**Claude Web & Mobile (Remote HTTP Connector):**
-1. Settings → Connectors → **Add custom connector**
-2. URL: `https://mcp.yourdomain.com/mcp`
-3. Authentication: select **No sign-in** and click **+ Add header** with `Authorization: Bearer <YOUR_MCP_TOKEN>`.
 
 ---
 
