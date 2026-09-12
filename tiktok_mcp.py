@@ -62,7 +62,7 @@ class Config:
     upload_url: str | None = os.getenv("TIKTOK_MCP_UPLOAD_URL") or None
     upload_token: str | None = os.getenv("TIKTOK_MCP_UPLOAD_TOKEN") or None
     local_dir: str | None = os.getenv("TIKTOK_MCP_LOCAL_DIR") or None
-    public_base_url: str = os.getenv("TIKTOK_MCP_PUBLIC_BASE_URL", "https://dosimple.app/media")
+    public_base_url: str = os.getenv("TIKTOK_MCP_PUBLIC_BASE_URL", "")
 
 
 CFG = Config()
@@ -335,6 +335,8 @@ async def _upload(path: Path, content_type: str, meta: dict[str, Any]) -> str:
         dest_dir = Path(CFG.local_dir)
         dest_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, dest_dir / path.name)
+        if not CFG.public_base_url:
+            return str(dest_dir / path.name)
         return f"{CFG.public_base_url.rstrip('/')}/{path.name}"
 
     if not CFG.upload_url:

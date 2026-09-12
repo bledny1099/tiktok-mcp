@@ -18,6 +18,7 @@
   <a href="#overview">Overview</a> •
   <a href="#available-tools">Available Tools</a> •
   <a href="#installation-and-setup">Setup</a> •
+  <a href="#media-hosting-and-downloads">Media Hosting</a> •
   <a href="#client-configuration">Configuration</a> •
   <a href="#license">License</a>
 </p>
@@ -89,6 +90,39 @@ uv run tiktok-mcp
 export TIKTOK_MCP_TRANSPORT=http
 uv run tiktok-mcp
 ```
+
+---
+
+## Media Hosting and Downloads
+
+When the AI model or user invokes `publish_video` to download and host video clips alongside speech transcripts, the server saves the media and returns publicly accessible URLs.
+
+To make downloaded videos and transcripts accessible to your AI assistant:
+
+### Option 1: Custom Domain / Web Server (Self-Hosted)
+
+Point a local directory served by Nginx or Caddy under your custom domain or CDN:
+
+```bash
+TIKTOK_MCP_UPLOAD_MODE=local
+TIKTOK_MCP_LOCAL_DIR=/var/www/media
+TIKTOK_MCP_PUBLIC_BASE_URL=https://media.yourdomain.com
+```
+
+Videos will be saved directly into `/var/www/media` and returned as `https://media.yourdomain.com/<slug>.mp4`.
+
+### Option 2: GitHub Pages (Free Static Hosting)
+
+If you don't have a dedicated web server or custom domain, you can host downloaded media files directly on **GitHub Pages**:
+
+1. Enable GitHub Pages on your repository (e.g. from `/docs` folder on `main` or via a dedicated `gh-pages` branch).
+2. Set `TIKTOK_MCP_LOCAL_DIR` to the local repository directory:
+   ```bash
+   TIKTOK_MCP_UPLOAD_MODE=local
+   TIKTOK_MCP_LOCAL_DIR=/path/to/your-repo/docs/media
+   TIKTOK_MCP_PUBLIC_BASE_URL=https://<username>.github.io/<repo>/media
+   ```
+3. Commit and push downloaded files to GitHub. The AI assistant and users can stream and inspect the extracted videos directly via the GitHub Pages URL!
 
 ---
 
