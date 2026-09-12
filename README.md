@@ -148,41 +148,20 @@ In the mobile app or browser, **no JSON files or terminal commands are needed**:
 
 ---
 
-### 2. Claude Desktop (One-Command Auto-Install)
+### 2. Cursor, Antigravity IDE, Windsurf, etc.
 
-Skip opening hidden configuration folders or editing JSON files manually:
+In AI IDEs (Cursor, Antigravity IDE, Windsurf), MCP servers can be added directly through the editor UI or configuration files. The setup is practically identical across all three:
 
-**Automatic 1-Click Install via CLI:**
-```bash
-uv run fastmcp install claude-desktop tiktok_mcp.py
-```
-*FastMCP automatically locates your Claude Desktop settings and registers the server.*
-
-*(Optional) Manual Config (`claude_desktop_config.json`):*
-```json
-{
-  "mcpServers": {
-    "tiktok": {
-      "command": "uv",
-      "args": [
-        "run",
-        "--directory",
-        "/absolute/path/to/tiktok-mcp",
-        "tiktok-mcp"
-      ]
-    }
-  }
-}
-```
-
----
-
-### 3. AI IDEs & Code Editors (Cursor, Antigravity IDE, Windsurf, VS Code)
-
-**Automatic Install in Cursor:**
+**Automatic 1-Click Install in Cursor:**
 ```bash
 uv run fastmcp install cursor tiktok_mcp.py
 ```
+
+**Editor Settings UI (Cursor / Antigravity IDE / Windsurf):**
+- Open **Settings** → **Features** (or **Tools**) → **MCP Servers** → **Add New MCP Server**
+- **Type**: `stdio`
+- **Command**: `uv`
+- **Args**: `run --directory /absolute/path/to/tiktok-mcp tiktok-mcp`
 
 **Manual Editor Config (`mcp_config.json`):**
 
@@ -215,6 +194,35 @@ uv run fastmcp install cursor tiktok_mcp.py
       "headers": {
         "Authorization": "Bearer YOUR_MCP_TOKEN"
       }
+    }
+  }
+}
+```
+
+---
+
+### 3. Claude Desktop
+
+Skip opening hidden configuration folders or editing JSON files manually:
+
+**Automatic 1-Click Install via CLI:**
+```bash
+uv run fastmcp install claude-desktop tiktok_mcp.py
+```
+*FastMCP automatically locates your Claude Desktop settings and registers the server.*
+
+*(Optional) Manual Config (`claude_desktop_config.json`):*
+```json
+{
+  "mcpServers": {
+    "tiktok": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "/absolute/path/to/tiktok-mcp",
+        "tiktok-mcp"
+      ]
     }
   }
 }
