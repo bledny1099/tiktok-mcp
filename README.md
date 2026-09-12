@@ -1,98 +1,152 @@
-# tiktok-mcp
+<p align="center">
+  <img src="assets/logo.png" alt="TikTok Logo" width="240" />
+</p>
 
-A high-performance Model Context Protocol (MCP) server for extracting TikTok video metadata, transcribing audio locally via Faster-Whisper, and managing media workflows without requiring official TikTok Developer API keys.
+<h1 align="center">TikTok MCP Server</h1>
 
-## Features
+<p align="center">
+  Model Context Protocol server for extracting TikTok video metadata, transcribing speech with Faster-Whisper, and automating media workflows.
+</p>
 
-- **Public Scraping**: Extracts metadata, thumbnails, author stats, and media URLs using `yt-dlp` with automatic fallback for geo-restricted or rate-limited videos.
-- **Local Speech-to-Text**: High-accuracy speech transcription powered by `faster-whisper` (`large-v3-turbo` / int8 quantization supported).
-- **Proxy Support**: Native HTTP & SOCKS5 proxy support for bypassing regional blocks (`TIKTOK_MCP_PROXY`).
-- **Flexible Publishing**: Built-in support for uploading and hosting media files locally or to remote storage.
-- **Dual Transport**: Supports both `stdio` (for local MCP clients like Claude Desktop / Cursor) and `http` (SSE / Streamable HTTP for remote deployments).
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.10+-3776AB?style=flat&logo=python&logoColor=white" alt="Python" />
+  <img src="https://img.shields.io/badge/Protocol-MCP-8A2BE2?style=flat" alt="MCP" />
+  <img src="https://img.shields.io/badge/License-MIT-green.svg?style=flat" alt="License" />
+</p>
+
+<p align="center">
+  <a href="#overview">Overview</a> •
+  <a href="#available-tools">Available Tools</a> •
+  <a href="#installation-and-setup">Setup</a> •
+  <a href="#client-configuration">Configuration</a> •
+  <a href="#license">License</a>
+</p>
 
 ---
 
-## Available MCP Tools
+## Overview
 
-| Tool | Description |
-|---|---|
-| `get_video_info(url, fast=False)` | Retrieves video title, description, hashtags, duration, author details, and engagement stats. |
-| `transcribe_video(url, languages=None, with_timestamps=False, model_size=None, keep_audio=False)` | Downloads the audio track and transcribes speech to text with Whisper. |
-| `publish_video(url, slug=None, include_transcript=True, languages=None, max_height=1080)` | Downloads video and thumbnail, transcribes audio, and publishes to configured storage. |
-| `batch_video_info(urls, fast=True)` | Processes up to 20 TikTok URLs in parallel. |
+This MCP server connects your AI assistant (Claude Desktop, Antigravity IDE, Cursor, etc.) directly to [TikTok](https://tiktok.com). It enables you to pull video descriptions, author statistics, tags, media streams, and speech-to-text transcriptions directly into your workspace.
+
+### Key capabilities
+
+- **Reliable extraction with fallback**: Extracts video metadata, view counts, and direct audio/video streams via yt-dlp, with automated API fallback for region-locked or challenge-restricted content.
+- **Local Speech-to-Text**: Fast, high-accuracy speech transcription powered by `faster-whisper` (`large-v3-turbo` with int8 quantization support).
+- **Outbound proxy support**: Native HTTP & SOCKS5 proxy routing (`TIKTOK_MCP_PROXY`) to handle cross-border blocks and georestricted videos.
+- **Custom domain publishing**: Download media and host video/cover assets directly on your own domain or CDN.
 
 ---
 
-## Quick Start
+## Available Tools
 
-### 1. Installation
+| Tool | Parameters | Description |
+| :--- | :--- | :--- |
+| `get_video_info` | `url` (string), `fast` (bool, default: False) | Returns video title, description, author, stats, and cover image. |
+| `transcribe_video` | `url` (string), `languages` (list[str], optional), `with_timestamps` (bool, default: False), `model_size` (string, optional), `keep_audio` (bool, default: False) | Downloads audio and transcribes speech to text locally using Whisper. |
+| `publish_video` | `url` (string), `slug` (string, optional), `include_transcript` (bool, default: True), `languages` (list[str], optional), `max_height` (int, default: 1080) | Downloads video, extracts transcript, and uploads files to custom domain storage. |
+| `batch_video_info` | `urls` (list[str]), `fast` (bool, default: True) | Fetches metadata for up to 20 TikTok links concurrently. |
+
+---
+
+## Installation and Setup
+
+### Prerequisites
+
+- Python 3.10 or higher
+- [uv](https://docs.astral.sh/uv/) package manager
+- `ffmpeg` (required for audio extraction and transcoding)
+
+### 1. Clone repository
 
 ```bash
 git clone https://github.com/bledny1099/tiktok-mcp.git
 cd tiktok-mcp
-
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -U pip
-pip install -e .
 ```
 
-*System requirement: `ffmpeg` must be installed on your system (`sudo apt install -y ffmpeg`).*
-
-### 2. Pre-downloading Whisper Model (Optional)
+### 2. Configure environment (optional)
 
 ```bash
-python download_model.py
+cp .env.example .env
 ```
 
-### 3. Running Locally (stdio mode)
+Edit `.env` to configure proxy, whisper model, or media storage options if needed:
+```bash
+TIKTOK_MCP_TRANSPORT=http
+TIKTOK_MCP_PORT=8770
+TIKTOK_MCP_WHISPER_MODEL=large-v3-turbo
+TIKTOK_MCP_PROXY=http://127.0.0.1:10809
+```
 
-For local MCP clients (e.g. Claude Desktop, Cursor, Antigravity IDE):
+### 3. Run server
 
+**Option A: Local stdio (for IDEs and Desktop clients)**
+```bash
+uv run tiktok-mcp
+```
+
+**Option B: HTTP / SSE daemon (for remote server deployments)**
+```bash
+export TIKTOK_MCP_TRANSPORT=http
+uv run tiktok-mcp
+```
+
+---
+
+## Client Configuration
+
+### Antigravity IDE / Claude Desktop / Cursor
+
+Add the server to your client configuration file (e.g. `mcp_config.json`):
+
+**Option A: Remote Streamable HTTP / SSE connector**
 ```json
 {
   "mcpServers": {
     "tiktok": {
-      "command": "/path/to/tiktok-mcp/.venv/bin/python",
-      "args": ["/path/to/tiktok-mcp/server.py"],
-      "env": {
-        "TIKTOK_MCP_TRANSPORT": "stdio"
+      "url": "https://mcp.yourdomain.com/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_MCP_TOKEN"
       }
     }
   }
 }
 ```
 
-### 4. Running as HTTP / SSE Daemon
-
-```bash
-export TIKTOK_MCP_TRANSPORT=http
-export TIKTOK_MCP_HOST=0.0.0.0
-export TIKTOK_MCP_PORT=8770
-python server.py
+**Option B: Local stdio command**
+```json
+{
+  "mcpServers": {
+    "tiktok": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "/absolute/path/to/tiktok-mcp",
+        "tiktok-mcp"
+      ]
+    }
+  }
+}
 ```
 
 ---
 
-## Configuration (`.env`)
+## Usage Example
 
-See `.env.example` for all configurable variables:
+Once configured, your AI assistant can interact with TikTok directly:
 
-- `TIKTOK_MCP_TRANSPORT`: `stdio` or `http` (default: `stdio`).
-- `TIKTOK_MCP_PROXY`: Outbound proxy URL (`http://host:port` or `socks5://host:port`).
-- `TIKTOK_MCP_WHISPER_MODEL`: Model name (default: `large-v3-turbo`).
-- `TIKTOK_MCP_WHISPER_COMPUTE`: Quantization type (`int8`, `float16`, `float32`).
-- `TIKTOK_MCP_UPLOAD_MODE`: Media upload target (`off`, `local`, or `http`).
+```text
+User: "Summarize this TikTok video and give me a full transcript: https://vt.tiktok.com/ZSqa7P1oy/"
+```
+
+The model calls:
+1. `get_video_info(url="https://vt.tiktok.com/ZSqa7P1oy/")`
+2. `transcribe_video(url="https://vt.tiktok.com/ZSqa7P1oy/", with_timestamps=True)`
+
+The model receives the exact speech transcription, metadata, and author details in Markdown.
 
 ---
-
-## Docker
-
-```bash
-docker build -t tiktok-mcp .
-docker run -d -p 8770:8770 --name tiktok-mcp tiktok-mcp
-```
 
 ## License
 
-MIT License.
+[MIT](LICENSE)
