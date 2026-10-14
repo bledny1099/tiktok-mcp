@@ -5,6 +5,7 @@
 #     "yt-dlp>=2024.0.0",
 #     "faster-whisper>=1.0.0",
 #     "httpx>=0.25.0",
+#     "Pillow>=10.0.0",
 # ]
 # ///
 """Entry point for TikTok MCP server."""

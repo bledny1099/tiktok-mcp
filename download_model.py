@@ -1,16 +1,15 @@
 import sys
-from faster_whisper import WhisperModel
+from tiktok_mcp import CFG, _get_model
 
-print("Downloading and loading model...", flush=True)
+print(
+    f"Downloading and loading Whisper model {CFG.whisper_model!r} into {CFG.work_dir / 'models'}...",
+    flush=True,
+)
 try:
-    model = WhisperModel(
-        "large-v3-turbo",
-        device="cpu",
-        compute_type="int8",
-        download_root="/var/lib/tiktok-mcp/models"
-    )
-    print("model ready", flush=True)
-except Exception as e:
+    _get_model()
+    print("Model ready.", flush=True)
+except Exception:
     import traceback
+
     traceback.print_exc()
     sys.exit(1)

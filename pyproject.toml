@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tiktok-mcp"
-version = "0.1.0"
-description = "TikTok MCP Server"
+version = "0.2.0"
+description = "TikTok MCP Server with Faster-Whisper speech-to-text and visual OCR for screenshots and photo carousels"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -13,10 +13,11 @@ dependencies = [
     "yt-dlp>=2024.0.0",
     "faster-whisper>=1.0.0",
     "httpx>=0.25.0",
+    "Pillow>=10.0.0",
 ]
 
 [project.scripts]
 tiktok-mcp = "tiktok_mcp:main"
 
 [tool.setuptools]
-py-modules = ["tiktok_mcp", "server"]
+py-modules = ["tiktok_mcp", "ocr", "server"]

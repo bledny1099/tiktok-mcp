@@ -5,7 +5,7 @@
 <h1 align="center">TikTok MCP Server</h1>
 
 <p align="center">
-  Model Context Protocol server for extracting TikTok video metadata, transcribing speech with Faster-Whisper, and automating media workflows.
+  Model Context Protocol server for extracting TikTok video and photo-carousel metadata, transcribing speech with Faster-Whisper, reading on-screen screenshots and slides with Tesseract OCR, and automating media workflows.
 </p>
 
 <p align="center">
@@ -28,15 +28,16 @@
 
 ## Overview
 
-This MCP server connects your AI assistant (Claude Desktop, Antigravity IDE, Cursor, etc.) directly to [TikTok](https://tiktok.com). It enables you to pull video descriptions, author statistics, tags, media streams, and speech-to-text transcriptions directly into your workspace.
+This MCP server connects your AI assistant (Claude Desktop, Antigravity IDE, Cursor, etc.) directly to [TikTok](https://tiktok.com). It pulls video descriptions, author statistics, tags, media streams, speech-to-text transcriptions, and on-screen OCR text from screenshots and photo slideshows directly into your workspace.
 
 ### Key capabilities
 
-- **Reliable extraction with fallback**: Extracts video metadata, view counts, and direct audio/video streams via yt-dlp, with automated API fallback for region-locked or challenge-restricted content.
-- **Local Speech-to-Text**: Fast, high-accuracy speech transcription powered by `faster-whisper` (`large-v3-turbo` with int8 quantization support). Audio never leaves your machine.
-- **Outbound proxy support**: Native HTTP & SOCKS5 proxy routing (`TIKTOK_MCP_PROXY`) to handle cross-border blocks and georestricted videos.
+- **Multi-tier extraction with fallback**: Extracts video and photo-mode metadata, view counts, and direct streams via `yt-dlp`, with automatic fallback to `tikwm` and TikTok's anonymous `embed/v2` endpoint when pages hit anti-bot challenges.
+- **Local Speech-to-Text**: Fast speech transcription powered by `faster-whisper` (`large-v3-turbo` with `int8` quantization support). Audio is processed locally on your machine.
+- **Visual OCR for Screenshots & Photo Carousels**: Automatically extracts keyframes from videos (`ffmpeg` scene-change + interval selection), deduplicates identical frames via 256-bit center-crop `dHash`, preprocesses dark-mode and light-mode screenshots with `Pillow`, and runs `tesseract` (`rus+eng`) to read chat logs, code snippets, articles, and TikTok Photo Mode (`/photo/`) carousels.
+- **Outbound proxy support**: Native HTTP and SOCKS5 proxy routing (`TIKTOK_MCP_PROXY`) to handle cross-border blocks and georestricted videos.
 - **Custom domain publishing**: Download media and host video/cover assets directly on your own domain or CDN.
-- **No TikTok Developer API**: No OAuth, no app registration, no API keys.
+- **No TikTok Developer API**: No OAuth, no app registration, no API keys required.
 
 ---
 
@@ -44,20 +45,20 @@ This MCP server connects your AI assistant (Claude Desktop, Antigravity IDE, Cur
 
 | Tool | Parameters | Description |
 | :--- | :--- | :--- |
-| `get_video_info` | `url` (string), `fast` (bool, default: False) | Returns video title, description, hashtags, links, author, stats, and cover image. `fast=True` uses the public oEmbed endpoint only — instant, but no description or statistics. |
-| `transcribe_video` | `url` (string), `languages` (list[str], optional), `with_timestamps` (bool, default: False), `model_size` (string, optional), `keep_audio` (bool, default: False) | Downloads the audio track and transcribes speech to text locally using Whisper. |
-| `publish_video` | `url` (string), `slug` (string, optional), `include_transcript` (bool, default: True), `languages` (list[str], optional), `max_height` (int, default: 1080) | Downloads video and cover, optionally transcribes, and uploads files to your own storage. |
+| `get_video_info` | `url` (string), `fast` (bool, default: False) | Returns post title, description, hashtags, links, author, stats, cover image, and `carousel_items` for photo slideshows. `fast=True` uses the public oEmbed endpoint for an instant response without extended stats. |
+| `transcribe_video` | `url` (string), `languages` (list[str], optional), `with_timestamps` (bool, default: False), `model_size` (string, optional), `keep_audio` (bool, default: False), `include_ocr` (bool, default: True) | Transcribes spoken audio locally with Whisper and extracts on-screen text from video keyframes or photo-carousel slides with Tesseract OCR. Returns combined `text`, separate `audio_text` and `ocr_text`, `ocr_segments`, and `source` (`whisper`, `whisper+ocr`, `ocr_video`, `ocr_slides`). |
+| `publish_video` | `url` (string), `slug` (string, optional), `include_transcript` (bool, default: True), `languages` (list[str], optional), `max_height` (int, default: 1080) | Downloads video and cover, optionally transcribes speech and on-screen text, and uploads files to your own storage. |
 | `batch_video_info` | `urls` (list[str]), `fast` (bool, default: True) | Fetches metadata for up to 20 TikTok links concurrently. |
 
 ### Language handling
 
-`languages` controls how Whisper is invoked:
+`languages` controls how Whisper and Tesseract OCR are invoked:
 
 | Value | Behaviour |
 | :--- | :--- |
-| `["ru"]` | Locks the language — fastest and most accurate when you know it in advance |
-| `["ru", "en"]` | A single multilingual pass (`multilingual=True`) covering code-switched speech — not two separate models |
-| `None` | Whisper auto-detects; the result includes `detected_language` and `language_probability` |
+| `["ru"]` | Locks Whisper to Russian and prioritizes Russian + English in Tesseract OCR |
+| `["ru", "en"]` | Runs a single multilingual pass (`multilingual=True`) covering code-switched speech and bilingual `rus+eng` OCR |
+| `None` | Whisper auto-detects spoken language (`detected_language`, `language_probability`); OCR defaults to `rus+eng` |
 
 Maximum 3 languages per call.
 
@@ -69,13 +70,15 @@ Maximum 3 languages per call.
 
 - Python 3.10 or higher
 - [uv](https://docs.astral.sh/uv/) package manager
-- `ffmpeg` — required for audio extraction and transcoding
+- `ffmpeg` (required for audio extraction, transcoding, and video keyframe extraction)
+- `tesseract-ocr` with Russian and English language packs (required for screenshot and photo-carousel OCR)
 
 ```bash
 # macOS
-brew install ffmpeg
+brew install ffmpeg tesseract tesseract-lang
+
 # Debian / Ubuntu
-sudo apt install ffmpeg
+sudo apt update && sudo apt install -y ffmpeg tesseract-ocr tesseract-ocr-rus tesseract-ocr-eng
 ```
 
 ### 1. Clone repository
@@ -91,18 +94,19 @@ cd tiktok-mcp
 cp .env.example .env
 ```
 
-Edit `.env` to configure proxy, whisper model, or media storage options if needed:
+Edit `.env` to configure proxy, Whisper model, OCR languages, or media storage options if needed:
 
 ```bash
 TIKTOK_MCP_TRANSPORT=http
 TIKTOK_MCP_PORT=8770
 TIKTOK_MCP_WHISPER_MODEL=large-v3-turbo
+TIKTOK_MCP_OCR_LANGUAGES=rus+eng
 TIKTOK_MCP_PROXY=http://127.0.0.1:10809
 ```
 
 ### 3. Pre-download the Whisper model (recommended)
 
-Otherwise the first transcription request stalls while weights download:
+Pre-downloading prevents the first transcription call from waiting on model weights:
 
 ```bash
 uv run python download_model.py
@@ -116,45 +120,47 @@ uv run python download_model.py
 uv run python server.py
 ```
 
-**Option B: HTTP daemon (for remote server deployments)**
+**Option B: HTTP or SSE daemon (for remote server deployments)**
 
 ```bash
 export TIKTOK_MCP_TRANSPORT=http
 uv run python server.py
 ```
 
-The HTTP transport binds to `127.0.0.1:8770` by default. Do not change the host to `0.0.0.0` without reading [Security](#security) first — the server has no built-in authentication.
+The HTTP transport binds to `127.0.0.1:8770` by default. Do not change the host to `0.0.0.0` without reading [Security](#security) first, as the server does not implement built-in authentication.
 
 ---
 
 ## Configuration Reference
 
-All configuration is via environment variables. None are required; every one has a working default.
+All configuration is via environment variables. Every variable has a working default.
 
 ### Transport
 
 | Variable | Default | Description |
 | :--- | :--- | :--- |
-| `TIKTOK_MCP_TRANSPORT` | `stdio` | `stdio` when the client launches the process, `http` when running as a daemon |
-| `TIKTOK_MCP_HOST` | `127.0.0.1` | Bind address for HTTP transport. Keep on loopback behind a reverse proxy |
-| `TIKTOK_MCP_PORT` | `8770` | Bind port for HTTP transport |
+| `TIKTOK_MCP_TRANSPORT` | `stdio` | `stdio` when the client launches the process, `http` or `sse` when running as a daemon |
+| `TIKTOK_MCP_HOST` | `127.0.0.1` | Bind address for HTTP/SSE transport. Keep on loopback behind a reverse proxy |
+| `TIKTOK_MCP_PORT` | `8770` | Bind port for HTTP/SSE transport |
 | `TIKTOK_MCP_WORK_DIR` | system temp | Scratch directory for downloads and the Whisper model cache |
 
 ### Extraction
 
 | Variable | Default | Description |
 | :--- | :--- | :--- |
-| `TIKTOK_MCP_PROXY` | — | `http://user:pass@host:port` or `socks5://host:port` |
-| `TIKTOK_MCP_COOKIES_FILE` | — | Path to a Netscape-format `cookies.txt` |
-| `TIKTOK_MCP_COOKIES_BROWSER` | — | Alternative: `chrome`, `firefox`, `edge`, `safari` |
+| `TIKTOK_MCP_PROXY` | none | `http://user:pass@host:port` or `socks5://host:port` |
+| `TIKTOK_MCP_COOKIES_FILE` | none | Path to a Netscape-format `cookies.txt` |
+| `TIKTOK_MCP_COOKIES_BROWSER` | none | Alternative: `chrome`, `firefox`, `edge`, `safari` |
 
-### Transcription
+### Transcription & OCR
 
 | Variable | Default | Description |
 | :--- | :--- | :--- |
 | `TIKTOK_MCP_WHISPER_MODEL` | `large-v3-turbo` | `tiny`, `base`, `small`, `medium`, `large-v3`, `large-v3-turbo` |
 | `TIKTOK_MCP_WHISPER_DEVICE` | `auto` | `cpu`, `cuda`, `auto` |
 | `TIKTOK_MCP_WHISPER_COMPUTE` | `int8` | `int8` for CPU, `float16` for GPU |
+| `TIKTOK_MCP_OCR_LANGUAGES` | `rus+eng` | Tesseract language packs used for keyframe and slide OCR |
+| `TIKTOK_MCP_OCR_CONCURRENCY` | `4` | Maximum concurrent OCR jobs |
 | `TIKTOK_MCP_MAX_TRANSCRIBE_SEC` | `600` | Videos longer than this are rejected before download |
 | `TIKTOK_MCP_MAX_CONCURRENT_TRANSCRIBE` | `1` | Parallel transcriptions. Raising this multiplies peak RAM |
 | `TIKTOK_MCP_MAX_CONCURRENT_META` | `4` | Parallel metadata fetches |
@@ -164,17 +170,17 @@ All configuration is via environment variables. None are required; every one has
 | Variable | Default | Description |
 | :--- | :--- | :--- |
 | `TIKTOK_MCP_UPLOAD_MODE` | `off` | `local`, `http`, or `off` |
-| `TIKTOK_MCP_LOCAL_DIR` | — | Destination directory in `local` mode |
-| `TIKTOK_MCP_UPLOAD_URL` | — | Receiving endpoint in `http` mode |
-| `TIKTOK_MCP_UPLOAD_TOKEN` | — | Sent as `Authorization: Bearer …` to that endpoint |
-| `TIKTOK_MCP_PUBLIC_BASE_URL` | — | Prefix used to build the returned public URLs |
+| `TIKTOK_MCP_LOCAL_DIR` | none | Destination directory in `local` mode |
+| `TIKTOK_MCP_UPLOAD_URL` | none | Receiving endpoint in `http` mode |
+| `TIKTOK_MCP_UPLOAD_TOKEN` | none | Sent as `Authorization: Bearer ...` to that endpoint |
+| `TIKTOK_MCP_PUBLIC_BASE_URL` | none | Prefix used to build the returned public URLs |
 
 ### Resource requirements
 
 | Model | Approx. RAM | Speed on CPU |
 | :--- | :--- | :--- |
 | `large-v3-turbo` | ~4 GB | Roughly real time |
-| `small` | ~1.5 GB | ~2× faster, noticeably lower accuracy on noisy audio |
+| `small` | ~1.5 GB | ~2x faster, lower accuracy on noisy audio |
 | `base` | ~0.7 GB | Suitable for 1 GB VPS instances |
 
 `publish_video` additionally needs free disk space for the video, the extracted audio, and the merged output at the same time.
@@ -217,7 +223,7 @@ If you don't have a dedicated web server or custom domain, host downloaded media
    ```
 3. Commit and push the downloaded files.
 
-> GitHub Pages is public to the entire internet and has a soft 1 GB repository limit. Don't use it for anything you wouldn't publish deliberately.
+> GitHub Pages is public to the entire internet and has a soft 1 GB repository limit. Do not use it for anything you wouldn't publish deliberately.
 
 ### Option 3: Remote HTTP Upload Endpoint
 
@@ -226,7 +232,7 @@ In `http` mode the server sends a `multipart/form-data` POST to `TIKTOK_MCP_UPLO
 | Field | Content |
 | :--- | :--- |
 | `file` | Video bytes (`video/mp4`) or cover bytes (`image/jpeg` \| `image/webp`) |
-| `meta` | JSON string: `id`, `title`, `description`, `hashtags`, `links`, `author`, `duration_sec`, `published_at`, `stats`, `music`, `transcript` |
+| `meta` | JSON string: `id`, `title`, `description`, `hashtags`, `links`, `author`, `duration_sec`, `published_at`, `stats`, `music`, `transcript`, `audio_transcript`, `ocr_transcript` |
 
 Header: `Authorization: Bearer <TIKTOK_MCP_UPLOAD_TOKEN>`.
 
@@ -263,14 +269,14 @@ async def upload(file: UploadFile = File(...), meta: str = Form("{}")):
 
 **The server implements no authentication of its own.** Every MCP client that can reach the port can invoke every tool. Authentication, TLS, and rate limiting are the reverse proxy's job.
 
-An exposed instance lets strangers run Whisper on your CPU, pull arbitrary TikTok URLs through your IP, and — if `TIKTOK_MCP_UPLOAD_MODE` is enabled — write files onto your domain.
+An exposed instance lets strangers run Whisper on your CPU, pull arbitrary TikTok URLs through your IP, and write files onto your domain if `TIKTOK_MCP_UPLOAD_MODE` is enabled.
 
 ### Rules
 
 1. Keep `TIKTOK_MCP_HOST=127.0.0.1`. Never publish port `8770` directly to the internet, and in Docker always map it as `-p 127.0.0.1:8770:8770`.
 2. Terminate TLS and check a bearer token at the reverse proxy.
 3. Generate the token with `openssl rand -hex 32`. Store it outside the repository.
-4. Keep `.env` and `cookies.txt` out of version control — both are already in `.gitignore`.
+4. Keep `.env` and `cookies.txt` out of version control (both are in `.gitignore`).
 5. Rotate the token if it ever appears in a chat log, screenshot, or issue.
 
 ### Nginx
@@ -359,7 +365,7 @@ docker run -d --name tiktok-mcp \
   tiktok-mcp
 ```
 
-The named volume persists the Whisper model cache across container rebuilds — without it, weights re-download every time.
+The named volume persists the Whisper model cache across container rebuilds so weights do not re-download on restart.
 
 ### systemd
 
@@ -399,9 +405,9 @@ sudo systemctl enable --now tiktok-mcp
 sudo systemctl status tiktok-mcp
 ```
 
-`StartLimitIntervalSec=0` matters: without it systemd gives up restarting after a few crashes in a row, and the service stays down silently.
+`StartLimitIntervalSec=0` prevents systemd from giving up after repeated crashes.
 
-Store the env file with restricted permissions — it holds your tokens:
+Store the env file with restricted permissions:
 
 ```bash
 sudo chown root:tiktokmcp /etc/tiktok-mcp.env
@@ -410,7 +416,7 @@ sudo chmod 0640 /etc/tiktok-mcp.env
 
 ### Keeping yt-dlp current
 
-TikTok changes its page structure regularly and breaks extraction. Schedule a weekly update:
+TikTok changes its page structure regularly. Schedule a weekly update:
 
 ```bash
 /opt/tiktok-mcp/.venv/bin/pip install -U yt-dlp && systemctl restart tiktok-mcp
@@ -439,10 +445,8 @@ sudo reboot && systemctl is-enabled tiktok-mcp && systemctl is-active tiktok-mcp
 
 ### 1. Claude Mobile (iOS / Android) & Claude Web
 
-No JSON files or terminal commands needed:
-
 1. Open Claude on your phone or in the browser.
-2. Go to **Settings** → **Connectors**.
+2. Go to **Settings** -> **Connectors**.
 3. Click **Add custom connector**.
 4. Enter the details:
    - **Name**: `TikTok`
@@ -451,19 +455,19 @@ No JSON files or terminal commands needed:
    - Click **+ Add header**:
      - Key: `Authorization`
      - Value: `Bearer <YOUR_MCP_TOKEN>`
-5. Click **Add connector**. The TikTok tools appear directly in your chat on both phone and web.
+5. Click **Add connector**. The TikTok tools appear in your chat on both phone and web.
 
 ---
 
 ### 2. Cursor, Antigravity IDE, Windsurf, etc.
 
 **Editor Settings UI:**
-- Open **Settings** → **Features** (or **Tools**) → **MCP Servers** → **Add New MCP Server**
+- Open **Settings** -> **Features** (or **Tools**) -> **MCP Servers** -> **Add New MCP Server**
 - **Type**: `stdio`
 - **Command**: `uv`
 - **Args**: `run --directory /absolute/path/to/tiktok-mcp python server.py`
 
-**Manual config (`mcp_config.json`)** — local stdio:
+**Manual config (`mcp_config.json`)** for local stdio:
 
 ```json
 {
@@ -542,7 +546,7 @@ The model calls:
 1. `get_video_info(url="https://vt.tiktok.com/ZSqa7P1oy/")`
 2. `transcribe_video(url="https://vt.tiktok.com/ZSqa7P1oy/", with_timestamps=True)`
 
-The model receives the exact speech transcription, metadata, and author details in Markdown.
+The model receives the spoken transcript, any on-screen screenshot or slide OCR text, metadata, and author details.
 
 ---
 
@@ -550,23 +554,23 @@ The model receives the exact speech transcription, metadata, and author details 
 
 | Symptom | Cause and fix |
 | :--- | :--- |
-| `Unable to extract webpage video data` / `Fresh cookies are needed` | TikTok's JS challenge. Export cookies from a logged-in browser in Netscape format and set `TIKTOK_MCP_COOKIES_FILE`. Cookies expire — re-export every few weeks |
-| `get_video_info` returns a `warning` field about oEmbed | yt-dlp failed and the minimal fallback was used. Same fix as above |
-| Metadata worked yesterday, fails today | Update yt-dlp first: `uv pip install -U yt-dlp` |
-| Client disconnects mid-transcription | Raise `proxy_read_timeout` on the proxy, or lower `TIKTOK_MCP_MAX_TRANSCRIBE_SEC` so long videos are rejected up front instead of hanging |
+| `Unable to extract webpage video data` / `Fresh cookies are needed` | TikTok's JS challenge triggered and all fallbacks failed. Export cookies from a logged-in browser in Netscape format and set `TIKTOK_MCP_COOKIES_FILE` |
+| `get_video_info` returns a `warning` field about oEmbed | `yt-dlp` and fallback scrapers failed, so the minimal oEmbed fallback was used |
+| Metadata worked yesterday, fails today | Update `yt-dlp` first: `uv pip install -U yt-dlp` |
+| Client disconnects mid-transcription | Raise `proxy_read_timeout` on the proxy, or lower `TIKTOK_MCP_MAX_TRANSCRIBE_SEC` so long videos are rejected up front |
 | Process killed during transcription | Out of memory. Use a smaller `TIKTOK_MCP_WHISPER_MODEL` or keep `TIKTOK_MCP_MAX_CONCURRENT_TRANSCRIBE=1` |
 | `publish_video` raises `Permission denied` | The service account can't write to `TIKTOK_MCP_LOCAL_DIR`. Check ownership and, under systemd, that the path is listed in `ReadWritePaths` |
-| `ffmpeg not found` | Install ffmpeg; it is not a Python dependency |
+| `ffmpeg not found` or `tesseract not found` | Install `ffmpeg` and `tesseract-ocr` (`tesseract-ocr-rus`, `tesseract-ocr-eng`) via your OS package manager |
 | Empty transcript on a video with speech | Music-only or very noisy audio. Try an explicit `languages` value, or a larger `model_size` |
 | Region-locked video | Route through `TIKTOK_MCP_PROXY` |
 
-Work directories named `audio-*` and `publish-*` under `TIKTOK_MCP_WORK_DIR` are cleaned up automatically, but a `SIGKILL` (including an OOM kill) leaves them behind. Sweep them periodically if the server is busy.
+Work directories named `audio-*` and `publish-*` under `TIKTOK_MCP_WORK_DIR` are cleaned up automatically, though a `SIGKILL` (including an OOM kill) can leave temp directories behind.
 
 ---
 
 ## Legal Notice
 
-Scraping public pages is technically straightforward but conflicts with TikTok's Terms of Service, and the videos themselves are protected by their authors' copyright. Republishing someone else's video on your own domain without permission carries DMCA risk.
+Scraping public pages conflicts with TikTok's Terms of Service, and the videos themselves are protected by their authors' copyright. Republishing someone else's video on your own domain without permission carries DMCA risk.
 
 Safe uses: your own content, content you are licensed to use, or storing only transcripts and metadata for analysis rather than the video itself. You are responsible for how you use this tool.
 

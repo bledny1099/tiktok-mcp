@@ -2,6 +2,9 @@ FROM python:3.11-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
+    tesseract-ocr \
+    tesseract-ocr-rus \
+    tesseract-ocr-eng \
     curl \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -11,7 +14,7 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 RUN pip install --no-cache-dir -e .
 
-COPY tiktok_mcp.py server.py download_model.py ./
+COPY tiktok_mcp.py ocr.py server.py download_model.py ./
 
 RUN useradd -m -u 1000 appuser && \
     mkdir -p /var/lib/tiktok-mcp && \
